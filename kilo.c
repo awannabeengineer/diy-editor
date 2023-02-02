@@ -7,12 +7,14 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 /*** defines ***/
@@ -48,15 +50,17 @@ typedef struct erow {
 } erow;
 
 struct editorConfig {
-  int cx, cy;     // cursor x,y for char array
-  int rx;         // render x position
-  int rowoff;     // tracks offset for row scroll position
-  int coloff;     // tracks offset for column scroll position
-  int screenrows; // number of rows on screen
-  int screencols; // number of columns on screen
-  int numrows;    // number of rows in file
-  erow *row;      // array of edtiro rows to hold rows of chars
-  char *filename; // name of file opened in buffer
+  int cx, cy;            // cursor x,y for char array
+  int rx;                // render x position
+  int rowoff;            // tracks offset for row scroll position
+  int coloff;            // tracks offset for column scroll position
+  int screenrows;        // number of rows on screen
+  int screencols;        // number of columns on screen
+  int numrows;           // number of rows in file
+  erow *row;             // array of edtiro rows to hold rows of chars
+  char *filename;        // name of file opened in buffer
+  char statusmsg[80];    // hold status bar message
+  time_t statusmsg_time; // hold status bar message displayed time
   struct termios orig_termios;
 };
 
@@ -438,6 +442,18 @@ void editorDrawStatusBar(struct abuf *ab) {
   }
   // switch to normal formatting
   abAppend(ab, "\x1b[m", 3);
+  // status bar is not the last line, messge line comes after it now
+  abAppend(ab, "\r\n", 2);
+}
+
+void editorDrawMessageBar(struct abuf *ab) {
+  // clear from cursor to end of line
+  abAppend(ab, "\x1b[K", 3);
+  int msglen = strlen(E.statusmsg);
+  if (msglen > E.screencols)
+    msglen = E.screencols;
+  if (msglen && time(NULL) - E.statusmsg_time < 5)
+    abAppend(ab, E.statusmsg, msglen);
 }
 
 // uses VT1oo escape sequances
@@ -459,6 +475,7 @@ void editorRefreshScreen() {
 
   editorDrawRows(&ab);
   editorDrawStatusBar(&ab);
+  editorDrawMessageBar(&ab);
 
   // move cursor on refresh
   char buf[32];
@@ -474,6 +491,14 @@ void editorRefreshScreen() {
 
   write(STDOUT_FILENO, ab.b, ab.len);
   abFree(&ab);
+}
+
+void editorSetStatusMessage(const char *fmt, ...) {
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+  va_end(ap);
+  E.statusmsg_time = time(NULL);
 }
 
 /*** input ***/
@@ -584,11 +609,13 @@ void initEditor() {
   E.numrows = 0;
   E.row = NULL;
   E.filename = NULL;
+  E.statusmsg[0] = '\0';
+  E.statusmsg_time = 0;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
-  // reserve last row for status bar
-  E.screenrows -= 1;
+  // reserve last two rows for status bar and messge line
+  E.screenrows -= 2;
 }
 
 int main(int argc, char *argv[]) {
@@ -598,8 +625,9 @@ int main(int argc, char *argv[]) {
     editorOpen(argv[1]);
   }
 
-  char c;
-  // read each character, quit on  q
+  editorSetStatusMessage("HELP: Ctrl-Q = quit");
+
+  // refresh after each key processing
   while (1) {
     editorRefreshScreen();
     editorProcessKeypress();
