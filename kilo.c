@@ -56,6 +56,7 @@ struct editorConfig {
   int screencols; // number of columns on screen
   int numrows;    // number of rows in file
   erow *row;      // array of edtiro rows to hold rows of chars
+  char *filename; // name of file opened in buffer
   struct termios orig_termios;
 };
 
@@ -297,6 +298,9 @@ void editorAppendRow(char *s, size_t len) {
 /*** file i/o ***/
 
 void editorOpen(char *filename) {
+  free(E.filename);
+  E.filename = strdup(filename);
+
   FILE *fp = fopen(filename, "r");
   if (!fp)
     die("fopen");
@@ -404,11 +408,36 @@ void editorDrawRows(struct abuf *ab) {
     }
     // clear from cursor to end of line
     abAppend(ab, "\x1b[K", 3);
-    // no new line after last line ~
-    if (y < E.screenrows - 1) {
-      abAppend(ab, "\r\n", 2);
+    abAppend(ab, "\r\n", 2);
+  }
+}
+
+// appends status bar chars to abuf
+void editorDrawStatusBar(struct abuf *ab) {
+  // [7m switches to inverted colors
+  abAppend(ab, "\x1b[7m", 4);
+  char status[80], rstatus[80];
+  // show first 20 chars of filename fllowed to number of lines
+  // use [No Name] if no file is given
+  int len = snprintf(status, sizeof(status), "%.20s - %d lines",
+                     E.filename ? E.filename : "[No Name]", E.numrows);
+  int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
+  if (len > E.screencols)
+    len = E.screencols;
+  abAppend(ab, status, len);
+  while (len < E.screencols) {
+    // append rstatus once thre is only rlen left in rows
+    if (E.screencols - len == rlen) {
+      abAppend(ab, rstatus, rlen);
+      break;
+
+    } else {
+      abAppend(ab, " ", 1);
+      len++;
     }
   }
+  // switch to normal formatting
+  abAppend(ab, "\x1b[m", 3);
 }
 
 // uses VT1oo escape sequances
@@ -429,6 +458,7 @@ void editorRefreshScreen() {
   abAppend(&ab, "\x1b[H", 3);
 
   editorDrawRows(&ab);
+  editorDrawStatusBar(&ab);
 
   // move cursor on refresh
   char buf[32];
@@ -553,9 +583,12 @@ void initEditor() {
   E.coloff = 0;
   E.numrows = 0;
   E.row = NULL;
+  E.filename = NULL;
 
   if (getWindowSize(&E.screenrows, &E.screencols) == -1)
     die("getWindowSize");
+  // reserve last row for status bar
+  E.screenrows -= 1;
 }
 
 int main(int argc, char *argv[]) {
