@@ -47,8 +47,14 @@ typedef enum emode {
   NORMAL_MODE = 0,
   INSERT_MODE,
   VISUAL_MODE,
-  COMMAND_MODE
+  COMMAND_MODE,
+  SEARCH_MODE
 } emode;
+
+const char *stringFromEmode(emode mode) {
+  const char *strings[] = {"NORMAL", "INSERT", "VISUAL", "COMMAND", "SEARCH"};
+  return strings[mode];
+}
 
 /*** data ***/
 
@@ -350,7 +356,7 @@ void editorRowInsertChar(erow *row, int at, int c) {
 void editorRowAppendString(erow *row, char *s, size_t len) {
   // len won't include NULL neither does row size
   // but row->chars has it so add + 1
-  row->chars = realloc(row, row->size + len + 1);
+  row->chars = realloc(row->chars, row->size + len + 1);
   memcpy(&row->chars[row->size], s, len);
   row->size += len;
   row->chars[row->size] = '\0';
@@ -360,7 +366,7 @@ void editorRowAppendString(erow *row, char *s, size_t len) {
 
 // how would backspace behave on an empty row?
 void editorRowDelChar(erow *row, int at) {
-  if (at < 0 || at > row->size)
+  if (at < 0 || at >= row->size)
     return;
   // we copy the '\0' as well
   memmove(&row->chars[at], &row->chars[at + 1], row->size - at);
@@ -382,13 +388,23 @@ void editorInsertChar(int c) {
 }
 
 void editorDelChar() {
+  // passed end of file
   if (E.cy == E.numrows)
+    return;
+  // start of file
+  if (E.cx == 0 && E.cy == 0)
     return;
 
   erow *row = &E.row[E.cy];
   if (E.cx > 0) {
     editorRowDelChar(row, E.cx - 1);
     E.cx--;
+  } else {
+    // cursor will be placed at current end of line above
+    E.cx = E.row[E.cy - 1].size;
+    editorRowAppendString(&E.row[E.cy - 1], row->chars, row->size);
+    editorDelRow(E.cy);
+    E.cy--;
   }
 }
 
@@ -555,13 +571,13 @@ void editorDrawRows(struct abuf *ab) {
 // appends status bar chars to abuf
 void editorDrawStatusBar(struct abuf *ab) {
   // [7m switches to inverted colors
-  abAppend(ab, "\x1b[7m", 4);
+  abAppend(ab, "\x1b[31;7m", 7);
   char status[80], rstatus[80];
   // show first 20 chars of filename fllowed to number of lines
   // use [No Name] if no file is given
-  int len = snprintf(status, sizeof(status), "%.20s - %d lines %s",
+  int len = snprintf(status, sizeof(status), "%.20s - %d lines %s %s",
                      E.filename ? E.filename : "[No Name]", E.numrows,
-                     E.dirty ? "(modified)" : "");
+                     E.dirty ? "(modified)" : "", stringFromEmode(E.mode));
   int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
   if (len > E.screencols)
     len = E.screencols;
@@ -703,6 +719,48 @@ void editorProcessKeypress() {
       break;
     case ':':
       E.mode = COMMAND_MODE;
+      break;
+    case '/':
+      E.mode = SEARCH_MODE;
+      break;
+    case HOME_KEY:
+    case '0':
+      E.cx = 0;
+      break;
+
+    case END_KEY:
+    case '$':
+      if (E.cy < E.numrows) {
+        E.cx = E.row[E.cy].size;
+      }
+      break;
+
+    case DEL_KEY:
+    case 'x':
+      if (c == DEL_KEY)
+        editorMoveCursor(ARROW_RIGHT);
+      editorDelChar();
+      break;
+
+    case PAGE_UP:
+    case PAGE_DOWN:
+    case CTRL_KEY('u'):
+    case CTRL_KEY('d'): {
+      // move crusor to top or bottom of screen
+      // this gos past last line
+      if (c == PAGE_UP || c == CTRL_KEY('u')) {
+        // move to top of screen
+        E.cy = E.rowoff;
+      } else if (c == PAGE_DOWN || c == CTRL_KEY('d')) {
+        E.cy = E.rowoff + E.screenrows - 1;
+      }
+
+      // simulate a screen worth of ARROW_UP or ARROW_DOWN
+      int times = E.screenrows;
+      while (times--) {
+        editorMoveCursor(c == (PAGE_UP || CTRL_KEY('u')) ? ARROW_UP : ARROW_DOWN);
+      }
+    } break;
 
     case ARROW_UP:
     case ARROW_DOWN:
@@ -794,6 +852,15 @@ void editorProcessKeypress() {
     break;
 
   case COMMAND_MODE:
+    switch (c) {
+    case CTRL_KEY('l'):
+    case '\x1b':
+      E.mode = NORMAL_MODE;
+      break;
+    }
+    break;
+
+  case SEARCH_MODE:
     switch (c) {
     case CTRL_KEY('l'):
     case '\x1b':
