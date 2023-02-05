@@ -98,7 +98,7 @@ void die(const char *s) {
 /*** prototypes ***/
 void editorSetStatusMessage(const char *fmt, ...);
 void editorRefreshScreen();
-char *editorPrompt(char *prompt);
+char *editorPrompt(char *prompt, void (*callback)(char *, int));
 
 /*** terminal ***/
 
@@ -487,7 +487,7 @@ void editorOpen(char *filename) {
 
 void editorSave() {
   if (E.filename == NULL) {
-    E.filename = editorPrompt("Save as: %s");
+    E.filename = editorPrompt("Save as: %s", NULL);
     if (E.filename == NULL) {
       editorSetStatusMessage("Save aborted");
       return;
@@ -515,13 +515,10 @@ void editorSave() {
 
 /*** find ***/
 
-// TODO
-// why are we searching in row->render and converting cx to rx
-// instead of searching in row->chars
-void editorFind() {
-  char *query = editorPrompt("Search: %s (ESC to cancel)");
-  if (query == NULL)
+void editorFindCallback(char *query, int key) {
+  if (key == '\r' || key == '\x1b') {
     return;
+  }
 
   int i;
   for (i = 0; i < E.numrows; i++) {
@@ -537,6 +534,27 @@ void editorFind() {
       E.rowoff = E.numrows;
       break;
     }
+  }
+}
+
+// TODO
+// why are we searching in row->render and converting cx to rx
+// instead of searching in row->chars
+void editorFind() {
+  // save and restore cursor position if search cancelled
+  int saved_cx = E.cx;
+  int saved_cy = E.cy;
+  int saved_coloff = E.coloff;
+  int saved_rowoff = E.rowoff;
+
+  char *query = editorPrompt("Search: %s (ESC to cancel)", editorFindCallback);
+  if (query) {
+    free(query);
+  } else {
+    E.cx = saved_cx;
+    E.cy = saved_cy;
+    E.coloff = saved_coloff;
+    E.rowoff = saved_rowoff;
   }
 }
 
@@ -722,7 +740,7 @@ void editorSetStatusMessage(const char *fmt, ...) {
 
 /*** input ***/
 
-char *editorPrompt(char *prompt) {
+char *editorPrompt(char *prompt, void (*callback)(char *, int)) {
   size_t bufsize = 128;
   char *buf = malloc(bufsize);
 
@@ -740,10 +758,14 @@ char *editorPrompt(char *prompt) {
         buf[--buflen] = '\0';
     } else if (c == '\x1b') { // exit to cancel, returns NULL
       editorSetStatusMessage("");
+      if (callback)
+        callback(buf, c);
       free(buf);
       return NULL;
     } else if (c == '\r') { // return on enter
       editorSetStatusMessage("");
+      if (callback)
+        callback(buf, c);
       // TODO
       // who frees the buf?
       return buf;
@@ -758,6 +780,8 @@ char *editorPrompt(char *prompt) {
       buf[buflen++] = c;
       buf[buflen] = '\0';
     }
+    if (callback)
+      callback(buf, c);
   }
 }
 
@@ -827,7 +851,7 @@ void editorProcessKeypress() {
       break;
     case ':':
       // E.mode = COMMAND_MODE;
-      editorPrompt(": %s");
+      editorPrompt(": %s", NULL);
       break;
     case '/':
       E.mode = SEARCH_MODE;
