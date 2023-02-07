@@ -59,7 +59,16 @@ const char *stringFromEmode(emode mode) {
   return strings[mode];
 }
 
+#define HL_HIGHLIGHT_NUMBERS (1 << 0)
+
 /*** data ***/
+
+// store syntax info
+struct editorSyntax {
+  char *filetype;
+  char **filematch;
+  int flags;
+};
 
 // stores a line of text
 typedef struct erow {
@@ -98,6 +107,14 @@ void die(const char *s) {
   perror(s);
   exit(1);
 }
+
+/*** filetypes ***/
+
+char *C_HL_extension[] = {".c", ".h", ".cpp", NULL};
+
+struct editorSyntax HLDB[] = {
+    {"c", C_HL_extension, HL_HIGHLIGHT_NUMBERS},
+};
 
 /*** prototypes ***/
 void editorSetStatusMessage(const char *fmt, ...);
